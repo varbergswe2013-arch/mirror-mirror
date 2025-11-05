@@ -1,0 +1,244 @@
+   <!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tri-Dimensional Sound Mixer</title>
+<style>
+  :root { --bg:#0b0e14; --panel:#121722; --text:#e9edf3; --accent:#9ad; }
+  html,body{
+    height:100%;margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;
+  }
+  .wrap{max-width:820px;margin:0 auto;padding:28px;}
+  h1{font-size:20px;margin:0 0 10px 0;font-weight:600;letter-spacing:.2px}
+  .card{
+    background:var(--panel);border:1px solid #1f2536;border-radius:14px;
+    padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.25);margin-bottom:16px;
+  }
+  input[type=range]{width:100%}
+  button{
+    background:var(--accent);color:#0b0e14;border:0;border-radius:10px;
+    padding:10px 14px;font-weight:600;cursor:pointer;
+  }
+  .vertical-slider{
+    -webkit-appearance: slider-vertical;
+    width: 8px;
+    height: 250px;
+  }
+  .label-pair{
+    display:flex;justify-content:space-between;
+    font-size:12px;opacity:.8;
+  }
+
+  /* Diagram section */
+  .diagram-wrap{
+    position:relative;margin-top:30px;border-radius:12px;overflow:hidden;
+    border:1px solid #1f2536;
+  }
+  .diagram-wrap img{width:100%;display:block;opacity:.9;}
+  #emotionDot{
+    position:absolute;width:14px;height:14px;border-radius:50%;
+    background:var(--accent);border:2px solid #fff;
+    box-shadow:0 0 8px rgba(255,255,255,.6);pointer-events:none;
+    transform:translate(-50%,-50%);
+    transition:top .15s linear,left .15s linear;
+  }
+
+  /* layout for sliders */
+  .sliders-layout{
+    display:grid;
+    grid-template-columns:100px 1fr;
+    gap:20px;
+    align-items:center;
+  }
+  .horizontal-group{
+    display:flex;
+    flex-direction:column;
+    gap:40px; /* distance between valence and time sliders */
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Tri-Dimensional Sound Mixer</h1>
+
+  <!-- Master + Roomtone -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <div>
+        <button id="startBtn">Start</button>
+        <button id="pauseBtn">Pause</button>
+      </div>
+      <div style="text-align:right;">
+        <label class="small">Master
+          <input id="master" type="range" min="0" max="100" value="85" step="1">
+        </label>
+        <br>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+          <button id="roomBtn" style="padding:6px 10px;">⏯</button>
+          <label class="small">Roomtone
+            <input id="room" type="range" min="0" max="100" value="40" step="1">
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main sliders -->
+  <div class="card">
+    <div class="sliders-layout">
+      <!-- Arousal left -->
+      <div style="display:flex;flex-direction:column;align-items:center;">
+        <div class="label-pair" style="flex-direction:column;align-items:center;">
+          <span style="transform:rotate(-90deg);margin-bottom:10px;">High</span>
+          <input id="arousal" class="vertical-slider" type="range" min="0" max="100" step="1" value="50">
+          <span style="transform:rotate(-90deg);margin-top:10px;">Low</span>
+        </div>
+        <div style="margin-top:6px;font-size:12px;">Arousal</div>
+      </div>
+
+      <!-- Valence + Time stacked -->
+      <div class="horizontal-group">
+        <div>
+          <div class="label-pair"><span>Negative Valence</span><span>Positive Valence</span></div>
+          <input id="valence" type="range" min="0" max="100" step="1" value="50">
+        </div>
+        <div>
+          <div class="label-pair"><span>Past Related</span><span>Future Related</span></div>
+          <input id="timeAxis" type="range" min="0" max="100" step="1" value="50">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Diagram -->
+  <div class="diagram-wrap">
+    <img src="The-specific-emotion-concepts-inside-the-tri-dimensional-model-of-core-affect-19.png" alt="Tri-Dimensional Theory of Feelings">
+    <div id="emotionDot"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const files = {
+    room:  'roomtone.wav',
+    alo:   'arousal_low.wav',
+    ahi:   'arousal_high.wav',
+    vneg:  'valence_negative.wav',
+    vpos:  'valence_positive.wav',
+    tpast: 'time_past.wav',
+    tfut:  'time_future.wav'
+  };
+
+  let actx, masterGain;
+  const nodes = {};
+  const dot = document.getElementById('emotionDot');
+  const diagram = document.querySelector('.diagram-wrap');
+  const roomBtn = document.getElementById('roomBtn');
+  let roomPlaying = true;
+
+  function createTrack(key, srcPath) {
+    const el = new Audio();
+    el.src = srcPath;
+    el.loop = true;
+    el.preload = 'auto';
+    const src = actx.createMediaElementSource(el);
+    const gain = actx.createGain();
+    gain.gain.value = key === 'room' ? 0.4 : 0.0; // room starts on
+    src.connect(gain).connect(masterGain);
+    nodes[key] = { element: el, src, gain };
+  }
+
+  function setGainSmooth(gainNode, target, timeConst = 0.08) {
+    const t = actx.currentTime;
+    const g = gainNode.gain;
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime(Math.max(0, Math.min(1, target)), t, timeConst);
+  }
+
+  function val01(id) { return Number(document.getElementById(id).value) / 100; }
+
+  function update() {
+    const a = val01('arousal');
+    const v = val01('valence');
+    const t = val01('timeAxis');
+    const room = val01('room');
+    const master = val01('master');
+
+    // audio update (room excluded from main start/pause)
+    setGainSmooth(nodes.alo.gain, 1 - a);
+    setGainSmooth(nodes.ahi.gain, a);
+    setGainSmooth(nodes.vneg.gain, 1 - v);
+    setGainSmooth(nodes.vpos.gain, v);
+    setGainSmooth(nodes.tpast.gain, 1 - t);
+    setGainSmooth(nodes.tfut.gain, t);
+    setGainSmooth(nodes.room.gain, room, 0.15);
+    setGainSmooth(masterGain, master, 0.12);
+
+    // dot update
+    const rect = diagram.getBoundingClientRect();
+    const margin = 20;
+    const x = margin + v * (rect.width - margin * 2) + (t - 0.5) * 50;
+    const y = rect.height - (margin + a * (rect.height - margin * 2)) + (t - 0.5) * 20;
+    dot.style.left = `${x}px`;
+    dot.style.top = `${y}px`;
+  }
+
+  async function start() {
+    if (!actx) {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = actx.createGain();
+      masterGain.gain.value = 0.85;
+      masterGain.connect(actx.destination);
+
+      // Build and play all tracks
+      createTrack('room', files.room);
+      createTrack('alo',  files.alo);
+      createTrack('ahi',  files.ahi);
+      createTrack('vneg', files.vneg);
+      createTrack('vpos', files.vpos);
+      createTrack('tpast',files.tpast);
+      createTrack('tfut', files.tfut);
+
+      const startOne = (k) => new Promise(res => {
+        const e = nodes[k].element;
+        e.addEventListener('canplay', () => { e.play().then(res).catch(res); }, { once: true });
+        if (e.readyState >= 2) { e.play().then(res).catch(res); }
+      });
+
+      await Promise.all(Object.keys(nodes).map(startOne));
+      update();
+    } else if (actx.state === 'suspended') {
+      await actx.resume();
+    }
+  }
+
+  function pauseAll() {
+    Object.entries(nodes).forEach(([k, n]) => { if (k !== 'room') n.element.pause(); });
+  }
+
+  function resumeAll() {
+    Object.entries(nodes).forEach(([k, n]) => { if (k !== 'room') n.element.play(); });
+  }
+
+  // Independent Roomtone control
+  roomBtn.addEventListener('click', () => {
+    if (!nodes.room) return;
+    if (roomPlaying) { nodes.room.element.pause(); roomBtn.textContent = '▶'; }
+    else { nodes.room.element.play(); roomBtn.textContent = '⏸'; }
+    roomPlaying = !roomPlaying;
+  });
+
+  ['arousal','valence','timeAxis','room','master'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', update);
+    el.addEventListener('change', update);
+  });
+
+  document.getElementById('startBtn').addEventListener('click', async () => { await start(); resumeAll(); });
+  document.getElementById('pauseBtn').addEventListener('click', pauseAll);
+})();
+</script>
+</body>
+</html>
